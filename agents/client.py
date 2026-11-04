@@ -2,14 +2,40 @@
 
 Both the CLI runner and the eval suite go through here, so there is a single
 definition of what talking to the agent means. The call shape has already
-changed once; when it changes again, exactly one function needs editing.
+changed twice; when it changes again, exactly one function needs editing.
 """
+
+import sys
 
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 
 from agents.store_manager import AGENT_NAME
 from config import settings
+
+
+def _reply_text(response) -> str:
+    """Return the text of the final message item in the response.
+
+    Deliberately not response.output_text. That property concatenates every
+    text item in the response, and the service sometimes emits more than one
+    complete answer. Under a strict JSON schema, two valid JSON objects glued
+    together is invalid JSON - an intermittent corruption found by the
+    never_claims_untaken_action eval case rather than by a human.
+
+    More than one message is worth knowing about, so it warns rather than
+    quietly discarding the extras.
+    """
+    messages = [item for item in response.output
+                if getattr(item, "type", None) == "message"]
+    if not messages:
+        raise RuntimeError("response contained no message item")
+    if len(messages) > 1:
+        print("warning: " + str(len(messages))
+              + " message items in one response, using the last", file=sys.stderr)
+    final = messages[-1]
+    return "".join(part.text for part in final.content
+                   if getattr(part, "type", None) == "output_text")
 
 
 def ask(prompt: str) -> str:
@@ -31,4 +57,4 @@ def ask(prompt: str) -> str:
     )
     agent = project.get_openai_client(agent_name=AGENT_NAME)
     response = agent.responses.create(model=cfg.model_deployment, input=prompt)
-    return response.output_text
+    return _reply_text(response)
