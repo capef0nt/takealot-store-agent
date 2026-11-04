@@ -1,0 +1,34 @@
+# Secrets - never commit
+.env
+.env.*
+!.env.example
+local.settings.json
+*.pem
+*.key
+.azure/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Editors / OS
+.vscode/*
+!.vscode/launch.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs & scratch
+*.log
+scratch/

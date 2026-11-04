@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Deploy agent",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "scripts.deploy_agents",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Deploy agent (draft)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "scripts.deploy_agents",
+      "args": ["--draft"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ]
+}

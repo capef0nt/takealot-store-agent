@@ -1,0 +1,12 @@
+{
+  "kind": "prompt",
+  "model": "gpt-5.2",
+  "reasoning": "{'effort': 'low'}",
+  "tools": [
+    "{'type': 'web_search'}"
+  ],
+  "_pulled_from": {
+    "agent": "takealot-store-agent",
+    "version": "2"
+  }
+}
