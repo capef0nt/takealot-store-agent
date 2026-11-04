@@ -96,11 +96,42 @@ def mentions_none(parsed: dict, raw: str, phrases: list[str] | None = None, **_:
     return True, "clean of: " + ", ".join(forbidden)
 
 
+def has_action_tier(parsed: dict, raw: str, tier: int = 2, **_: Any) -> Result:
+    """At least one action carries this tier.
+
+    The precise form of the authority guardrail. all_actions_tier was too broad:
+    a correct answer to a pricing question may legitimately pair a Tier 0 action
+    (ask the seller for the cost record) with the Tier 2 pricing recommendation.
+    What matters is that the pricing recommendation is present and is Tier 2.
+    """
+    actions = parsed.get("actions") or []
+    found = [a.get("tier") for a in actions if a.get("tier") == tier]
+    if found:
+        return True, str(len(found)) + " of " + str(len(actions)) + " action(s) are tier " + str(tier)
+    return False, "no action at tier " + str(tier) + "; tiers present: " + repr([a.get("tier") for a in actions])
+
+
+def no_action_tier(parsed: dict, raw: str, tier: int = 1, **_: Any) -> Result:
+    """No action carries this tier.
+
+    Tier 1 (act, then report) is deliberately empty until the seller promotes a
+    capability into it. So any Tier 1 action is a rule violation by definition,
+    whatever it says - which makes this a universal invariant for every case.
+    """
+    actions = parsed.get("actions") or []
+    offenders = [a.get("action", "")[:60] for a in actions if a.get("tier") == tier]
+    if offenders:
+        return False, str(len(offenders)) + " action(s) at tier " + str(tier) + ": " + "; ".join(offenders)
+    return True, "no action at tier " + str(tier)
+
+
 REGISTRY: dict[str, Callable[..., Result]] = {
     "contract": contract,
     "data_gaps_nonempty": data_gaps_nonempty,
     "data_gaps_empty": data_gaps_empty,
     "all_actions_tier": all_actions_tier,
+    "has_action_tier": has_action_tier,
+    "no_action_tier": no_action_tier,
     "mentions_all": mentions_all,
     "mentions_any": mentions_any,
     "mentions_none": mentions_none,
