@@ -151,10 +151,23 @@ Three are store-wide and ride on Foundry `structured_inputs`, substituted into
 the instructions at `{{name}}` and changeable per invocation without touching
 the prompt: stale-data threshold, stock-out horizon, return-rate threshold.
 Two are inherently per-product and must never appear in instructions: the
-margin floor and the reorder point. The margin floor is derived - landed cost
-plus Takealot category fees plus that product's minimum margin - and the
-reorder point is supplier lead time plus a buffer. No single number can stand
-in for either.
+margin floor and the reorder point. The reorder point is supplier lead time
+plus a buffer.
+
+The margin floor is NOT a sum. Takealot's success fee is a percentage of the
+selling price, so adding it as a constant produces a floor that is
+systematically too low - precisely the failure the first anti-goal names, and
+one no deterministic check would catch, because the check would be built from
+the same wrong formula. The floor is a solve:
+
+    floor_price = (landed_cost + fixed_fees) / (1 - fee_pct - margin_pct)
+
+where `fee_pct` is the product's category success fee and `margin_pct` is the
+minimum margin as a fraction of selling price. If the minimum margin is instead
+a rand amount per unit, it moves into `fixed_fees`. VAT must be handled
+consistently on both sides: Takealot prices are VAT-inclusive, so landed cost
+must be too, or neither is.
+[Assistant's call, raised by design review.]
 
 **Missing per-product data is bootstrapped by asking once, then stored.**
 When the agent meets a product with no cost record it asks the seller, records
@@ -162,10 +175,15 @@ the answer, and never asks again. Prompting is how data is bootstrapped, not
 how it is read. Without persistence this becomes an anti-goal: an agent that
 asks the same question every morning.
 
-**One small state store, serving three jobs.**
+**One small state store, serving several jobs.**
 A per-product record (landed cost, minimum margin, lead time, reorder point), a
 single store-policy record, and rank history. Rank history is required because
-a rank without yesterday's rank is meaningless. Recommendation: Azure Table
+a rank without yesterday's rank is meaningless. Design review added two
+entities that follow from the corrected margin formula and from period
+comparison: a Takealot category fee table carrying a captured-on date, because
+the fee rate is an input to every floor and Takealot revises them; and daily
+sales snapshots, which become a prerequisite deliverable if the Seller API
+serves only current state rather than history. [Assistant's call.] Recommendation: Azure Table
 Storage to begin - rows are simple, it is part of a storage account, and it
 costs pennies. Cosmos DB is the scale answer and is more exam-relevant, but it
 is also what quietly consumes a self-funded subscription.
@@ -200,6 +218,17 @@ the engine. GitHub Actions is chosen over Azure DevOps only because the code is
 already on GitHub. Authentication is OIDC workload identity federation, so no
 secret exists in the repository: the three Azure identifiers are `vars`, not
 `secrets`, because identifiers are not credentials.
+
+**Tools execute client-side as function tools, at least to begin with.**
+The SDK offers client-side function tools and service-hosted alternatives
+(OpenAPI, Azure Function, MCP). Client-side wins first because tool outputs can
+be injected, and injectable outputs are the only way an eval case can test
+*grounded* behaviour rather than refusal - which matters because the design's
+central promise is that evals gate every change. Service-hosted tools would
+also need a public HTTPS endpoint with its own auth, working against the
+IP-restriction decision. The cost is real: `ask()` stops being one
+request/response and becomes a tool-call loop, shared by the runner and the
+eval suite. [Assistant's call, raised by design review.]
 
 **The seller's existing ranking tooling is wrapped, not rebuilt.**
 It already solves the hardest data problem in the project - seeing the search
@@ -256,18 +285,63 @@ The framework is built and green.
 - Log and trace field conventions beyond what the platform emits.
 - Whether the project becomes an installable package. It will need to be when
   tests arrive; it is not required before then.
+- How a draft version is promoted to live. `update_version` looks like the
+  mechanism; deploying live and rolling back on a failed eval is the
+  alternative.
+- The Azure app registration and federated credential behind CI are assumed not
+  to exist yet, so creating them is part of the work. [Assistant's call.]
 
 ## Open questions
 
-These change the plan, and only the seller can answer them.
+These change the plan, and only the seller can answer them. Ordered by how much
+the answer moves the build. Sharpened by design review.
 
-1. Azure subscription type, because it decides whether Cosmos DB and Azure AI
-   Search are affordable at all.
-2. What the existing ranking tooling is - language, how it is invoked, what it
-   returns, whether it keeps history, how it behaves when blocked.
-3. The real policy numbers. The three global defaults currently in the
-   definition - 24 hours, 21 days, 0.05 - are provisional placeholders chosen
-   by the assistant, not by the seller.
-4. Which capability earns Tier 1 first: the first thing the agent is trusted to
-   do and report rather than recommend.
-5. Whether ads data is reachable programmatically at all.
+1. **Who executes an approved Tier 2 action - the seller, or the agent?** And
+   by what channel does the agent deliver a brief, ask a question, and receive
+   an approval, given that a scheduled run has no human present? If the agent
+   executes, write tools must exist, which breaks the guarantee that an agent
+   without a price-writing tool cannot change a price - and enforcement has to
+   move to an approved-actions-only gate or a separate narrowly-tooled executor
+   agent. If the seller executes by hand, the system stays read-only and Tier 1
+   is close to meaningless. These are different systems.
+2. **What does the Takealot Seller API actually expose, and are there working
+   credentials today?** Specifically historical sales by SKU and how far back,
+   buy-box or suppression status, returns with reasons, stock at the DC, and the
+   rate limits. If it serves only current state, daily snapshot ingestion
+   becomes a prerequisite and period comparison cannot work until history
+   accrues. If buy-box status is unavailable, ladder rungs 1 and 2 cannot
+   execute as written.
+3. **How many active SKUs, and where does the ranking tool run from?** Thirty
+   SKUs and the agent can reason over every product in a run; fifteen hundred
+   and it cannot, so a deterministic pre-pass computes the numbers and the model
+   sees only exceptions - a different code layout and a different partition key.
+   And datacenter IPs are blocked by search pages far faster than a residential
+   connection, so a ranking tool that works on the seller's machine today may
+   not survive a move to Azure, forcing a split-execution topology.
+4. **Is the minimum margin a rand amount per unit or a percentage of selling
+   price, and where does the category fee schedule come from?** Both feed the
+   corrected floor formula above. If the fee rates are not in the Seller API
+   they need a maintained table and a refresh story.
+5. **A monthly budget ceiling, in rands.** It decides whether Cosmos DB and
+   Azure AI Search are live options at all, sets reasoning effort, and sets how
+   often layer-two evaluation runs.
+6. **Does replenishment mean ordering from a supplier, or shipping your own
+   stock into the Takealot DC?** The reorder point implies the first, Courier
+   Guy implies the second. If it is inbound-to-Takealot, the booking must follow
+   a Takealot-side inbound shipment created through the Seller API, making this
+   a two-system workflow. And is there a Courier Guy sandbox? Without one, the
+   only capability that spends real money is the only one the eval suite can
+   never exercise end to end.
+7. **Is there an exam date, and when the store's needs conflict with exam
+   coverage, which wins?** Ordering is most of what a plan is, and a dated exam
+   turns exam-weighted work into hard milestones.
+8. **If ads data has no API, which fallback is acceptable?** Asking the seller
+   every run brushes against the babysitting anti-goal; rewriting the ladder to
+   skip to the market check loses the cheap checks the whole loop is built on;
+   driving the Seller Portal in a browser is not ruled out by the non-goals,
+   which only exclude it for things the API can do.
+9. **Which capability earns Tier 1 first** - the first thing the agent is
+   trusted to do and report rather than recommend.
+10. **The real policy numbers.** The three global defaults in the definition
+    today - 24 hours, 21 days, 0.05 - are provisional placeholders chosen by the
+    assistant, not by the seller.
