@@ -6,12 +6,31 @@ changed twice; when it changes again, exactly one function needs editing.
 """
 
 import sys
+from functools import lru_cache
 
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 
 from agents.store_manager import AGENT_NAME
 from config import settings
+
+
+@lru_cache(maxsize=1)
+def _clients(endpoint: str, agent_name: str):
+    """Create and retain the Azure clients for this process.
+
+    Evaluations call ``ask`` once per case. Reusing the credential and clients
+    avoids repeating authentication setup and connection-pool creation on each
+    call. Configuration is read before this function is called, so a changed
+    endpoint naturally gets a new cached client pair.
+    """
+    credential = DefaultAzureCredential()
+    project = AIProjectClient(
+        endpoint=endpoint,
+        credential=credential,
+        allow_preview=True,
+    )
+    return project, project.get_openai_client(agent_name=agent_name)
 
 
 def _reply_text(response) -> str:
@@ -50,11 +69,6 @@ def ask(prompt: str) -> str:
       * model must equal the agent own model or the service rejects the call.
     """
     cfg = settings()
-    project = AIProjectClient(
-        endpoint=cfg.project_endpoint,
-        credential=DefaultAzureCredential(),
-        allow_preview=True,
-    )
-    agent = project.get_openai_client(agent_name=AGENT_NAME)
+    _, agent = _clients(cfg.project_endpoint, AGENT_NAME)
     response = agent.responses.create(model=cfg.model_deployment, input=prompt)
     return _reply_text(response)
